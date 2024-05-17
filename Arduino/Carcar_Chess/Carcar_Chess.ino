@@ -1,4 +1,20 @@
 
+#include "Button.h"
+
+String move;
+String oldMove;
+bool bSuccess = false;
+
+void printMove()
+{
+  if (move != oldMove)
+  { 
+    if (move == "") Serial.println("\"\"");
+    else Serial.println(move);
+    oldMove = move;
+  }
+}
+
 String readStringFromSerial()
 {
   String str;
@@ -13,13 +29,16 @@ String readStringFromSerial()
 void setup()
 {
   Serial.begin(9600);
+  Button::setup();
 }
 
 void loop()
 { 
-  if (Serial.available())
+  if (!bSuccess)
   {
-    Serial.println(readStringFromSerial());
+    Button::startReadingMove(move, bSuccess);
+    printMove();
   }
+  
   delay(100);
 }
