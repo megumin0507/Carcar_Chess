@@ -1,115 +1,117 @@
 
-#include <Stepper.h>
+#include <AccelStepper.h>
 #include <Servo.h>
-#include <String.h>
 
-#define EN 8
 #define STEPX 2
 #define DIRX 5
 #define STEPY 3
 #define DIRY 6
-#define SERVO 4
+#define SERVO 11
 
-#define SQUARESIZE 200
-
-const int stepsPerRev = 200;
-Stepper XStepper(stepsPerRev, STEPX, DIRX);
-Stepper YStepper(stepsPerRev, STEPY, DIRY);
+AccelStepper XStepper(1, STEPX, DIRX);
+AccelStepper YStepper(1, STEPY, DIRY);
 Servo servo;
+
+const int squareSize = 330;
 
 class Motor
 {
 public:
 
-  static void setup()
-  {
-    pinMode(EN, OUTPUT);
- 	  digitalWrite(EN, LOW);
-    
+  static void setup(int speed)
+  { 
+    maxSpeed = speed;
+    XStepper.setMaxSpeed(maxSpeed);
+    YStepper.setMaxSpeed(maxSpeed);
+    XSpeed = maxSpeed;
+    YSpeed = maxSpeed;
+    XStepper.moveTo(0);
+    YStepper.moveTo(0);
+
     servo.attach(SERVO);
   }
 
-  static void setSpeed(long inSpeed)
-  {
-    XStepper.setSpeed(inSpeed);
-    YStepper.setSpeed(inSpeed);
-  }
-
-  static void moveXTo(char targetCoordinate)
-  {
-    if (!checkXCoordinate(targetCoordinate))
-    {
-      Serial.print("[ERROR] Invalid X Coordinate! You entered: ");
-      Serial.println(targetCoordinate);
-      return;
-    }
-
-    /*
-     * positive step doesn't mean go from left to right, wait to be confirmed
-     */
-    XStepper.step(squareSize * (targetCoordinate - currentXCoordinate));
-    currentXCoordinate = targetCoordinate;
-  }
-
-  static void moveYTo(char targetCoordinate)
-  {
-    if (!checkYCoordinate(targetCoordinate))
-    {
-      Serial.print("[ERROR] Invalid Y Coordinate! You entered: ");
-      Serial.println(targetCoordinate);
-      return;
-    }
-
-    /*
-     * positive step doesn't mean go from bottom to top, wait to be confirmed
-     */
-    YStepper.step(squareSize * (targetCoordinate - currentYCoordinate));
-    currentYCoordinate = targetCoordinate;
-  }
-
-  static void moveTo(String targetCoordinate)
+  static void runSpeed()
   { 
-    if (targetCoordinate.length() != 2)
-    {
-      Serial.print("[ERROR] Wrong Coordinate length! You entered: ");
-      Serial.println(targetCoordinate);
-      return;
-    }
-    const char X = targetCoordinate[0];
-    const char Y = targetCoordinate[1];
-
-    if (checkCoordinates(X, Y))
-    {
-      Serial.print("[ERROR] Invalid Coordinate! You entered: ");
-      Serial.println(targetCoordinate);
-      return;
-    }
-
-    XStepper.step(squareSize * (X - currentXCoordinate));
-    YStepper.step(squareSize * (Y - currentYCoordinate));
-    currentXCoordinate = X;
-    currentYCoordinate = Y;
+    XStepper.setSpeed(XSpeed);
+    XStepper.runSpeedToPosition();
+    YStepper.setSpeed(YSpeed);
+    YStepper.runSpeedToPosition();
   }
 
-  static void resumeStepperPosition()
+  static void moveToCoordinate(String coordinate)
   {
-    XStepper.step(-squareSize * (currentXCoordinate - 'a'));
-    YStepper.step(-squareSize * (currentYCoordinate - '1'));
-    currentXCoordinate = 'a';
-    currentYCoordinate = '1';
+    if (!checkCoordinate(coordinate)) return;
+
+    const char X = coordinate[0];
+    const char Y = coordinate[1];
+
+    const int XIndex = X-'a';
+    const int YIndex = '8' - Y;
+    const int deltaX = XIndex - currentXIndex;
+    const int deltaY = YIndex - currentYIndex;
+    if (deltaX == 0 && deltaY == 0) return;
+
+    // Serial.print("deltaX = ");
+    // Serial.print(deltaX);
+    // Serial.print(", deltaY = ");
+    // Serial.println(deltaY);
+    
+    XSpeed = clamp(maxSpeed * deltaX/(deltaX + deltaY));
+    YSpeed = clamp(maxSpeed * deltaY/(deltaX + deltaY));
+    XStepper.moveTo(-squareSize * XIndex);
+    YStepper.moveTo(squareSize * YIndex);
+
+    // Serial.print("ditance X = ");
+    // Serial.print(XStepper.distanceToGo());
+    // Serial.print(", distance Y = ");
+    // Serial.println(YStepper.distanceToGo());
+
+    currentXIndex = XIndex;
+    currentYIndex = YIndex;
+
+    while(!isFinishedRunning()) runSpeed();
+  }
+
+  static void movePiece(String move)
+  { 
+    if (!checkMoveLength(move)) return;
+
+    String firstCoor = getFirstCoorFromMove(move);
+    String secondCoor = getSecondCoorFromMove(move);
+    if (!checkCoordinate(firstCoor) || !checkCoordinate(secondCoor)) return;
+
+    moveToCoordinate(firstCoor);
+    moveMagnetUp();
+    delay(500);
+    moveToCoordinate(secondCoor);
+    moveMagnetDown();
+    delay(500);
+  }
+
+  static bool isFinishedRunning()
+  {
+    return XStepper.distanceToGo() == 0 && YStepper.distanceToGo() == 0;
   }
   
   static void moveMagnetUp()
   {
-    servo.write(90);
+    servo.write(0);
   }
 
   static void moveMagnetDown()
   {
-    servo.write(0);
+    servo.write(90);
   }
 
 private:
+
+  static int clamp(int value)
+  {
+    if (value < 300) value = 300;
+    if (value > 600) value = 600;
+    return value;
+  }
 
   static bool checkXCoordinate(char X)
   {
@@ -121,16 +123,71 @@ private:
     return Y >= '1' && Y <= '8';
   }
 
-  static bool checkCoordinates(char X, char Y)
+  static bool checkCoordinate(String coordinate)
   {
-    return checkXCoordinate(X) && checkYCoordinate(Y);
+    if (coordinate.length() != 2)
+    {
+      Serial.print("Coordinate length is wrong! Length: ");
+      Serial.println(coordinate.length());
+      return false;
+    }
+
+    const char X = coordinate[0];
+    const char Y = coordinate[1];
+    if (!checkXCoordinate(X))
+    {
+      Serial.print("X coordinate is invalid! X coordinate: ");
+      Serial.println(X);
+      return false;
+    }
+    if (!checkYCoordinate(Y))
+    {
+      Serial.print("Y coordinate is invalid! Y coordinate: ");
+      Serial.println(Y);
+      return false;
+    }
+
+    return true;
   }
 
-  static int squareSize;
-  static char currentXCoordinate;
-  static char currentYCoordinate;
+  static String getFirstCoorFromMove(String move)
+  {
+    if (!checkMoveLength(move)) return "";
+    String coor = "";
+    coor += move[0];
+    coor += move[1];
+    return coor;
+  }
+
+  static String getSecondCoorFromMove(String move)
+  {
+    if (!checkMoveLength(move)) return "";
+    String coor = "";
+    coor += move[2];
+    coor += move[3];
+    return coor;
+  }
+
+  static bool checkMoveLength(String move)
+  {
+    if (move.length() != 4)
+    {
+      Serial.print("Move length is wrong! Length: ");
+      Serial.println(move.length());
+      return false;
+    }
+    return true;
+  }
+
+  static int currentXIndex;
+  static int currentYIndex;
+  static int XSpeed;
+  static int YSpeed;
+  static int maxSpeed;
 };
 
-int Motor::squareSize = SQUARESIZE;
-char Motor::currentXCoordinate = 'a';
-char Motor::currentYCoordinate = '1';
+int Motor::currentXIndex = 0;
+int Motor::currentYIndex = 0;
+int Motor::XSpeed = 0;
+int Motor::YSpeed = 0;
+int Motor::maxSpeed = 0;
